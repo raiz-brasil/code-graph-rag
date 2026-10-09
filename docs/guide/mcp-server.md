@@ -226,3 +226,12 @@ claude mcp remove code-graph-rag
 ```
 
 ![claude mcp remove code-graph-rag, then claude mcp list showing no servers configured](../assets/demos/mcp-server-remove.gif)
+
+## TypeScript injected-service calls
+
+Calls through an instance field, including a constructor parameter property
+such as `constructor(private service: Service)`, resolve against the field's
+imported type before name heuristics. Aliases and lexical `this` are checked;
+a plain constructor parameter, a static method or a nested ordinary function
+does not establish an instance-field receiver. This is a static type binding,
+not proof of the concrete provider configured at runtime.

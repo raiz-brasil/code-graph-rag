@@ -645,3 +645,71 @@ def test_python_untyped_receiver_stays_heuristic(
         },
     )
     assert _calls(mock_ingestor, ".svc.handle")["models.A.count"] == {HEURISTIC}
+
+
+def test_constructor_parameter_property_selects_the_imported_service(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    _index(
+        temp_repo,
+        mock_ingestor,
+        {
+            "models.ts": MODELS_TS,
+            "svc.ts": (
+                "import { A as Service, B } from './models'\n"
+                "export class Controller {\n"
+                "  constructor(private readonly service: Service) {}\n"
+                "  run() { return this.service.count(1) }\n"
+                "  arrow() { return () => this.service.count(1) }\n"
+                "}\n"
+            ),
+        },
+    )
+    assert _calls(mock_ingestor, ".svc.Controller.run") == {"models.A.count": {EXACT}}
+    all_calls = _calls(mock_ingestor, "")
+    assert all_calls["models.A.count"] == {EXACT}
+    assert "models.B.count" not in all_calls
+
+
+def test_plain_constructor_parameter_does_not_create_a_property(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    _index(
+        temp_repo,
+        mock_ingestor,
+        {
+            "models.ts": MODELS_TS,
+            "svc.ts": (
+                "import { A, B } from './models'\n"
+                "export class Controller {\n"
+                "  constructor(service: A) {}\n"
+                "  run() { return this.service.count(1) }\n"
+                "}\n"
+            ),
+        },
+    )
+    assert _calls(mock_ingestor, ".svc.Controller.run") == {}
+
+
+def test_typed_field_does_not_bind_dynamic_or_static_this(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    _index(
+        temp_repo,
+        mock_ingestor,
+        {
+            "models.ts": MODELS_TS,
+            "svc.ts": (
+                "import { A, B } from './models'\n"
+                "export class Controller {\n"
+                "  service: A;\n"
+                "  run() { return this.service.count(1) }\n"
+                "  dynamic() { function inner() { this.service.count(1) }; return inner }\n"
+                "  static wrong() { return this.service.count(1) }\n"
+                "}\n"
+            ),
+        },
+    )
+    assert _calls(mock_ingestor, ".svc.Controller.run") == {"models.A.count": {EXACT}}
+    assert _calls(mock_ingestor, ".svc.Controller.wrong") == {}
+    assert _calls(mock_ingestor, ".svc.Controller.dynamic.inner") == {}

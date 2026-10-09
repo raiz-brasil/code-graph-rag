@@ -5092,6 +5092,23 @@ class CallProcessor:
             and call_node.type == cs.TS_GO_CALL_EXPRESSION
         ):
             return self._resolve_go_callee(ctx, call_node, call_name, call_var_types)
+        if ctx.is_js_ts:
+            func = call_node.child_by_field_name(cs.FIELD_FUNCTION)
+            if func is not None and func.type == cs.TS_MEMBER_EXPRESSION:
+                receiver = func.child_by_field_name(cs.FIELD_OBJECT)
+                declared = (
+                    self._js_this_field_declaration(ctx, receiver)
+                    if receiver is not None and receiver.type == cs.TS_MEMBER_EXPRESSION
+                    else None
+                )
+                if declared is not None:
+                    if declared.foreign:
+                        return None
+                    if receiver_name := safe_decode_text(receiver):
+                        call_var_types = {
+                            **(call_var_types or {}),
+                            receiver_name: declared.qn,
+                        }
         callee_info = ctx.resolve_func(
             call_name,
             ctx.module_qn,

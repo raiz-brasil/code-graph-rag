@@ -4447,6 +4447,10 @@ class CallResolver:
         module_qn: str,
         local_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
+        if local_var_types and cs.SEPARATOR_DOT.join(parts[:-1]) in local_var_types:
+            return self._resolve_self_attribute_call(
+                parts, call_name, import_map, module_qn, local_var_types
+            )
         class_name = parts[0]
         method_name = cs.SEPARATOR_DOT.join(parts[1:])
 
