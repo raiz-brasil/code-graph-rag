@@ -6,6 +6,14 @@ description: "Integrate Code-Graph-RAG with Claude Code as an MCP server for nat
 
 Code-Graph-RAG can run as an MCP (Model Context Protocol) server, enabling seamless integration with Claude Code and other MCP clients.
 
+## Read-only serving
+
+Set `CGR_MCP_READ_ONLY=1` to serve only the explicit deterministic query and file-reading allowlist in `codebase_rag/mcp/server.py`. The same allowlist filters `tools/list` and rejects direct `tools/call` requests before handler lookup. Newly added tools are denied until explicitly reviewed and allowed. Editing, ingestion, deletion, annotations, natural-language Cypher and agent tools are unavailable in this mode.
+
+Index through a separate process before serving. Incomplete graph markers are refused without automatic metadata recovery in read-only mode; recover through the indexer. Mount source checkouts read-only for the query process; this switch does not make the database account or filesystem read-only and does not authenticate clients. Use bearer authentication for HTTP. With the variable unset, existing server behavior is preserved.
+
+`read_file` accepts an optional `project` to select an indexed checkout in a workspace, including paginated reads. Selection is local to each request, verified against the stored project root, and retains path traversal and symlink confinement. Omitted `project` uses the workspace default. `list_directory` still lists only the server's root.
+
 ## Quick Setup
 
 **If installed via pip** (and `code-graph-rag` is on your PATH):

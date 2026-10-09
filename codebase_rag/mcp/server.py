@@ -32,6 +32,23 @@ if TYPE_CHECKING:
     from starlette.types import ASGIApp, Receive, Scope, Send
 
 
+READ_ONLY_TOOLS = frozenset(
+    {
+        "list_projects",
+        "resolve",
+        "definition",
+        "callers",
+        "callees",
+        "implementors",
+        "overrides",
+        "importers",
+        "tests_reaching",
+        "read_file",
+        "list_directory",
+    }
+)
+
+
 def setup_logging() -> None:
     logger.remove()
     logger.add(
@@ -148,6 +165,8 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
     logger.info(lg.MCP_SERVER_INIT_SUCCESS)
 
     server = Server(cs.MCP_SERVER_NAME)
+    read_only = os.environ.get("CGR_MCP_READ_ONLY") == "1"
+    tools.read_only = read_only
 
     def _create_error_content(message: str) -> CallToolResult:
         return _failed_call(te.failure(message))
@@ -162,6 +181,7 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
                 inputSchema={**schema.inputSchema},
             )
             for schema in schemas
+            if not read_only or schema.name in READ_ONLY_TOOLS
         ]
 
     @server.call_tool()
@@ -169,6 +189,9 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
         name: str, arguments: MCPToolArguments
     ) -> list[TextContent] | CallToolResult:
         logger.info(lg.MCP_SERVER_CALLING_TOOL.format(name=name))
+
+        if read_only and name not in READ_ONLY_TOOLS:
+            return _create_error_content(f"Tool {name!r} is disabled in read-only mode")
 
         try:
             handler_info = tools.get_tool_handler(name)

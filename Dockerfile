@@ -35,7 +35,7 @@ RUN uv sync --frozen --no-dev --extra treesitter-full --no-binary-package pymgcl
 FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ripgrep libssl3 zlib1g libzstd1 && \
+    apt-get install -y --no-install-recommends ripgrep git libssl3 zlib1g libzstd1 && \
     rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home appuser

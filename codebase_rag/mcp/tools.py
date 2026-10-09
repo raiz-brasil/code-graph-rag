@@ -218,6 +218,8 @@ def _plain_function(tool: Tool) -> ToolFuncPlain[...]:
 
 
 class MCPToolsRegistry:
+    read_only = False
+
     # Class-level default so the read guard cannot raise AttributeError on a
     # registry built through `__new__`. Tests construct it that way in a
     # dozen places, and a guard that explodes on a half-built fixture reports
@@ -659,6 +661,10 @@ class MCPToolsRegistry:
                         cs.MCPParamName.OFFSET: MCPInputSchemaProperty(
                             type=cs.MCPSchemaType.INTEGER,
                             description=td.MCP_PARAM_OFFSET,
+                        ),
+                        cs.MCPParamName.PROJECT: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description="Workspace project whose checkout should be read.",
                         ),
                         cs.MCPParamName.LIMIT: MCPInputSchemaProperty(
                             type=cs.MCPSchemaType.INTEGER,
@@ -2009,7 +2015,7 @@ class MCPToolsRegistry:
             # abort from blocking every later process until someone runs a
             # full update (#1705 review). An absent phase reads as writing, so
             # a marker from before the phase existed stays fail-closed.
-            if row.get("writing", True):
+            if self.read_only or row.get("writing", True):
                 return True
             if not self._recover_stranded_markers(project_name):
                 # Could not clear it. The store refused a write, so the run
@@ -3481,12 +3487,28 @@ class MCPToolsRegistry:
             return te.failure(e)
 
     async def read_file(
-        self, file_path: str, offset: int | None = None, limit: int | None = None
+        self,
+        file_path: str,
+        offset: int | None = None,
+        limit: int | None = None,
+        project: str | None = None,
     ) -> str:
         logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
         try:
+            project_root = Path(self.project_root).resolve()
+            reader_tool = self._file_reader_tool
+            if project is not None or self.workspace is not None:
+                selected, error = self._workspace_scope(project)
+                if error is not None:
+                    return te.failure(error)
+                if selected is None:
+                    selected = derive_project_name(project_root)
+                root = await _run_in_thread(self._source_root_for, selected)
+                if root is None:
+                    return te.failure(f"No indexed checkout for project {selected!r}")
+                project_root = root.resolve()
+                reader_tool = create_file_reader_tool(FileReader(str(project_root)))
             if offset is not None or limit is not None:
-                project_root = Path(self.project_root).resolve()
                 try:
                     full_path = (project_root / file_path).resolve()
                     full_path.relative_to(project_root)
@@ -3496,9 +3518,7 @@ class MCPToolsRegistry:
                 return await _run_in_thread(_read_file_slice, full_path, start, limit)
             else:
                 # Returned as is: a ToolFailure must stay one (issue #2650).
-                return await _plain_function(self._file_reader_tool)(
-                    file_path=file_path
-                )
+                return await _plain_function(reader_tool)(file_path=file_path)
 
         except Exception as e:
             logger.error(lg.MCP_ERROR_READ.format(error=e))
