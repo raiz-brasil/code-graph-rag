@@ -44,6 +44,8 @@
 
 Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
 
+The Raiz fork also has a [CircleCI Linux pilot](docs/circleci.md) for its existing checks. The GitHub multi-platform matrix, release workflows and authenticated integrations remain active during onboarding.
+
 <p align="center">
   <b>1. Index:</b> <code>cgr start --update-graph</code> parses a repository into a knowledge graph (sped up)
 </p>

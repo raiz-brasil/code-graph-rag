@@ -1,0 +1,222 @@
+version: 2.1
+
+executors:
+  python:
+    docker:
+      - image: cimg/base:2026.10-24.04
+
+commands:
+  install-uv:
+    steps:
+      - run:
+          name: Install uv 0.12.6
+          command: |
+            curl --connect-timeout 15 --max-time 60 -fsSL https://astral.sh/uv/0.12.6/install.sh | timeout --kill-after=30s 2m sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+            "$HOME/.local/bin/uv" --version
+  install-frontends:
+    steps:
+      - run:
+          name: Install the Linux language frontends
+          command: |
+            timeout --kill-after=30s 15m bash -eo pipefail \<<'BASH'
+            sudo apt-get update
+            sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-17-jdk-headless libicu-dev php-cli php-xdebug phpunit build-essential cmake
+            mkdir -p /tmp/cgr-toolchains "$HOME/.local" "$HOME/.dotnet"
+            curl --connect-timeout 15 --max-time 180 -fsSL https://go.dev/dl/go1.26.6.linux-amd64.tar.gz -o /tmp/cgr-toolchains/go.tar.gz
+            printf '%s  %s\n' 708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89 /tmp/cgr-toolchains/go.tar.gz | sha256sum --check
+            tar -xzf /tmp/cgr-toolchains/go.tar.gz -C "$HOME/.local"
+            curl --connect-timeout 15 --max-time 180 -fsSL https://nodejs.org/dist/v22.23.3/node-v22.23.3-linux-x64.tar.xz -o /tmp/cgr-toolchains/node.tar.xz
+            printf '%s  %s\n' df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de /tmp/cgr-toolchains/node.tar.xz | sha256sum --check
+            tar -xJf /tmp/cgr-toolchains/node.tar.xz -C "$HOME/.local"
+            curl --connect-timeout 15 --max-time 180 -fsSL https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-gnu/rustup-init -o /tmp/cgr-toolchains/rustup-init
+            printf '%s  %s\n' dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71 /tmp/cgr-toolchains/rustup-init | sha256sum --check
+            chmod +x /tmp/cgr-toolchains/rustup-init
+            /tmp/cgr-toolchains/rustup-init -y --profile minimal --default-toolchain 1.99.0 --no-modify-path
+            curl --connect-timeout 15 --max-time 180 -fsSL https://builds.dotnet.microsoft.com/dotnet/Sdk/8.0.426/dotnet-sdk-8.0.426-linux-x64.tar.gz -o /tmp/cgr-toolchains/dotnet8.tar.gz
+            printf '%s  %s\n' 8141d01bdc53f604aed3bb661b604707a64209f8a947cd81bf95b4f518951593d77864069191f54ea5e84362a409da6b0f69074bf893b283d7e0cf93e2bf20a8 /tmp/cgr-toolchains/dotnet8.tar.gz | sha512sum --check
+            tar -xzf /tmp/cgr-toolchains/dotnet8.tar.gz -C "$HOME/.dotnet"
+            curl --connect-timeout 15 --max-time 180 -fsSL https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.402/dotnet-sdk-10.0.402-linux-x64.tar.gz -o /tmp/cgr-toolchains/dotnet10.tar.gz
+            printf '%s  %s\n' 1904a98dda2db34ba78ba3c4fb1b224455329af91c341d83547843c1839e112b04ae699ee92fa2449a8f62249196a938723078c0c60b9f65c88539d5687729c2 /tmp/cgr-toolchains/dotnet10.tar.gz | sha512sum --check
+            tar -xzf /tmp/cgr-toolchains/dotnet10.tar.gz -C "$HOME/.dotnet"
+            BASH
+            echo 'export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 DOTNET_ROOT="$HOME/.dotnet" GOTOOLCHAIN=local DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1' >> "$BASH_ENV"
+            echo 'export PATH="$JAVA_HOME/bin:$HOME/.dotnet:$HOME/.cargo/bin:$HOME/.local/go/bin:$HOME/.local/node-v22.23.3-linux-x64/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Verify the language frontends are usable
+          command: |
+            javac -version
+            dotnet --list-sdks
+            test "$(go env GOVERSION)" = go1.26.6
+            test "$(node --version)" = v22.23.3
+            cargo --version
+            php -r 'exit(PHP_MAJOR_VERSION === 8 && PHP_MINOR_VERSION === 3 && extension_loaded("xdebug") ? 0 : 1);'
+            phpunit --version
+            timeout --kill-after=30s 5m uv run --no-sync python -c 'from codebase_rag.parsers.java_frontend.frontend import _build_tool as java; from codebase_rag.parsers.csharp_frontend.frontend import _build_tool as csharp; assert java("javac") is not None; assert csharp("dotnet") is not None'
+  checkout-source:
+    steps:
+      - checkout
+      - run:
+          name: Initialize Git history and submodules
+          command: |
+            timeout --kill-after=30s 5m bash -eo pipefail \<<'BASH'
+            if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+              git fetch --unshallow
+            fi
+            git submodule update --init --recursive
+            BASH
+
+jobs:
+  quality:
+    executor: python
+    resource_class: medium
+    steps:
+      - checkout
+      - install-uv
+      - run: timeout --kill-after=30s 3m uv lock --check
+      - run:
+          name: Install locked dependencies without Neo4j
+          command: timeout --kill-after=30s 15m uv sync --python 3.12.14 --frozen --extra treesitter-full --extra semantic --extra milvus --extra test --group dev
+      - run:
+          name: Lint, format, security and repository manifests
+          command: |
+            timeout --kill-after=30s 8m bash -eo pipefail \<<'BASH'
+            uv run --no-sync ruff check .
+            uv run --no-sync ruff format --check .
+            uv run --no-sync pre-commit run bandit --all-files
+            uv run --no-sync python scripts/validate_labels.py
+            uv run --no-sync python scripts/validate_coderabbit_config.py
+            BASH
+      - run: timeout --kill-after=30s 5m uv run --no-sync ty check codebase_rag --exclude codebase_rag/tests/
+      - run:
+          name: Typecheck with the optional Neo4j driver
+          command: |
+            timeout --kill-after=30s 8m bash -eo pipefail \<<'BASH'
+            uv sync --python 3.12.14 --frozen --extra treesitter-full --extra semantic --extra milvus --extra test --extra neo4j --group dev
+            uv run --no-sync ty check codebase_rag --exclude codebase_rag/tests/
+            BASH
+
+  unit-base:
+    executor: python
+    resource_class: medium
+    steps:
+      - checkout-source
+      - install-uv
+      - run: timeout --kill-after=30s 10m uv sync --python 3.12.14 --frozen --extra test --group dev
+      - install-frontends
+      - run:
+          name: Unit suite on the base installation
+          command: timeout --kill-after=30s 40m uv run --no-sync pytest -n 2 -m 'not integration' --tb=short --junitxml=/tmp/test-results/unit-base.xml
+      - store_test_results:
+          path: /tmp/test-results
+
+  unit-full:
+    executor: python
+    resource_class: large
+    steps:
+      - checkout-source
+      - install-uv
+      - run: timeout --kill-after=30s 15m uv sync --python 3.12.14 --frozen --extra treesitter-full --extra test --extra semantic --extra milvus --extra neo4j --group dev
+      - install-frontends
+      - restore_cache:
+          keys:
+            - hf-unixcoder-base-linux-v1
+      - run:
+          name: Prefetch the public embedding model
+          command: |
+            timeout --kill-after=30s 8m bash -eo pipefail \<<'BASH'
+            for attempt in 1 2 3; do
+              if uv run --no-sync python -c "from huggingface_hub import snapshot_download; snapshot_download('microsoft/unixcoder-base')"; then
+                exit 0
+              fi
+              sleep "$((attempt * 15))"
+            done
+            exit 1
+            BASH
+      - save_cache:
+          key: hf-unixcoder-base-linux-v1
+          paths:
+            - ~/.cache/huggingface
+      - run:
+          name: Unit suite with all supported optional backends
+          command: timeout --kill-after=30s 40m uv run --no-sync pytest -n 2 -m 'not integration' --tb=short --junitxml=/tmp/test-results/unit-full.xml
+      - store_test_results:
+          path: /tmp/test-results
+
+  integration:
+    machine:
+      image: ubuntu-2404:current
+      docker_layer_caching: false
+    resource_class: large
+    steps:
+      - checkout-source
+      - install-uv
+      - run:
+          name: Install the locked integration dependencies
+          command: timeout --kill-after=30s 15m uv sync --python 3.12.14 --frozen --extra treesitter-full --extra test --extra semantic --extra milvus --extra neo4j --group dev
+      - install-frontends
+      - run:
+          name: Integration suite with managed Docker fixtures
+          command: |
+            docker info > /dev/null
+            timeout --kill-after=30s 30m uv run --no-sync pytest -m integration -v --tb=short --cov=codebase_rag --cov-report=xml --junitxml=/tmp/test-results/integration.xml
+      - store_test_results:
+          path: /tmp/test-results
+      - store_artifacts:
+          path: coverage.xml
+
+  packaging-and-go:
+    executor: python
+    resource_class: large
+    environment:
+      GOTOOLCHAIN: local
+    steps:
+      - checkout-source
+      - install-uv
+      - run: timeout --kill-after=30s 10m uv sync --python 3.12.14 --frozen --extra treesitter-full --extra test --group dev
+      - install-frontends
+      - run:
+          name: Build and smoke the standalone binary
+          command: |
+            timeout --kill-after=30s 25m bash -eo pipefail \<<'BASH'
+            uv run --no-sync python build_binary.py
+            ./dist/code-graph-rag-* --version
+            BASH
+      - run:
+          name: Build and smoke a wheel with fresh dependency resolution
+          command: |
+            timeout --kill-after=30s 15m bash -eo pipefail \<<'BASH'
+            uv build --wheel --out-dir dist/wheels
+            uv run --no-sync python -m venv /tmp/cgr-wheel-smoke
+            /tmp/cgr-wheel-smoke/bin/python -m pip install --upgrade pip
+            /tmp/cgr-wheel-smoke/bin/python -m pip install dist/wheels/*.whl
+            /tmp/cgr-wheel-smoke/bin/python -m pip list
+            ROOT_DIR="$PWD"
+            cd /tmp
+            /tmp/cgr-wheel-smoke/bin/python -c 'import codebase_rag'
+            /tmp/cgr-wheel-smoke/bin/cgr --version
+            /tmp/cgr-wheel-smoke/bin/python "$ROOT_DIR/scripts/smoke_wheel.py"
+            BASH
+      - run:
+          name: Build and test the Go frontend
+          command: |
+            timeout --kill-after=30s 10m bash -eo pipefail \<<'BASH'
+            test "$(go env GOVERSION)" = go1.26.6
+            (cd codebase_rag/parsers/go_frontend/gotypes && go build ./...)
+            uv run --no-sync pytest codebase_rag/tests/test_go_frontend.py -v --tb=short --junitxml=/tmp/test-results/go.xml
+            BASH
+      - store_test_results:
+          path: /tmp/test-results
+
+workflows:
+  ci:
+    jobs:
+      - quality
+      - unit-base:
+          requires: [quality]
+      - unit-full:
+          requires: [quality]
+      - integration:
+          requires: [quality]
+      - packaging-and-go:
+          requires: [quality]
