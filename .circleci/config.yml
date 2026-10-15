@@ -4,6 +4,8 @@ executors:
   python:
     docker:
       - image: cimg/base:2026.10-24.04
+    environment:
+      TERM: xterm-256color
 
 commands:
   install-uv:
@@ -21,7 +23,7 @@ commands:
           command: |
             timeout --kill-after=30s 15m bash -eo pipefail \<<'BASH'
             sudo apt-get update
-            sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-17-jdk-headless libicu-dev php-cli php-xdebug phpunit build-essential cmake
+            sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-17-jdk-headless libicu-dev php-cli php-xdebug phpunit build-essential cmake ripgrep
             mkdir -p /tmp/cgr-toolchains "$HOME/.local" "$HOME/.dotnet"
             curl --connect-timeout 15 --max-time 180 -fsSL https://go.dev/dl/go1.26.6.linux-amd64.tar.gz -o /tmp/cgr-toolchains/go.tar.gz
             printf '%s  %s\n' 708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89 /tmp/cgr-toolchains/go.tar.gz | sha256sum --check
@@ -105,8 +107,11 @@ jobs:
       - run: timeout --kill-after=30s 10m uv sync --python 3.12.14 --frozen --extra test --group dev
       - install-frontends
       - run:
+          name: Smoke the simulated terminal behavior
+          command: timeout --kill-after=30s 2m uv run --no-sync pytest codebase_rag/tests/test_duplicates_table_output.py::test_a_terminal_still_gets_the_editor_links 'codebase_rag/tests/test_report_table_width.py::test_a_terminal_table_still_fits_the_terminal_width[60]' --maxfail=1 --tb=short
+      - run:
           name: Unit suite on the base installation
-          command: timeout --kill-after=30s 40m uv run --no-sync pytest -n 2 -m 'not integration' --tb=short --junitxml=/tmp/test-results/unit-base.xml
+          command: timeout --kill-after=30s 40m uv run --no-sync pytest -n 2 -m 'not integration' --maxfail=1 --tb=short --junitxml=/tmp/test-results/unit-base.xml
       - store_test_results:
           path: /tmp/test-results
 
@@ -118,6 +123,9 @@ jobs:
       - install-uv
       - run: timeout --kill-after=30s 15m uv sync --python 3.12.14 --frozen --extra treesitter-full --extra test --extra semantic --extra milvus --extra neo4j --group dev
       - install-frontends
+      - run:
+          name: Smoke the simulated terminal behavior
+          command: timeout --kill-after=30s 2m uv run --no-sync pytest codebase_rag/tests/test_duplicates_table_output.py::test_a_terminal_still_gets_the_editor_links 'codebase_rag/tests/test_report_table_width.py::test_a_terminal_table_still_fits_the_terminal_width[60]' --maxfail=1 --tb=short
       - restore_cache:
           keys:
             - hf-unixcoder-base-linux-v1
@@ -139,7 +147,7 @@ jobs:
             - ~/.cache/huggingface
       - run:
           name: Unit suite with all supported optional backends
-          command: timeout --kill-after=30s 40m uv run --no-sync pytest -n 2 -m 'not integration' --tb=short --junitxml=/tmp/test-results/unit-full.xml
+          command: timeout --kill-after=30s 40m uv run --no-sync pytest -n 2 -m 'not integration' --maxfail=1 --tb=short --junitxml=/tmp/test-results/unit-full.xml
       - store_test_results:
           path: /tmp/test-results
 
@@ -148,6 +156,8 @@ jobs:
       image: ubuntu-2404:current
       docker_layer_caching: false
     resource_class: large
+    environment:
+      TERM: xterm-256color
     steps:
       - checkout-source
       - install-uv
@@ -159,7 +169,7 @@ jobs:
           name: Integration suite with managed Docker fixtures
           command: |
             docker info > /dev/null
-            timeout --kill-after=30s 30m uv run --no-sync pytest -m integration -v --tb=short --cov=codebase_rag --cov-report=xml --junitxml=/tmp/test-results/integration.xml
+            timeout --kill-after=30s 30m uv run --no-sync pytest -m integration -v --maxfail=1 --tb=short --cov=codebase_rag --cov-report=xml --junitxml=/tmp/test-results/integration.xml
       - store_test_results:
           path: /tmp/test-results
       - store_artifacts:
@@ -203,7 +213,7 @@ jobs:
             timeout --kill-after=30s 10m bash -eo pipefail \<<'BASH'
             test "$(go env GOVERSION)" = go1.26.6
             (cd codebase_rag/parsers/go_frontend/gotypes && go build ./...)
-            uv run --no-sync pytest codebase_rag/tests/test_go_frontend.py -v --tb=short --junitxml=/tmp/test-results/go.xml
+            uv run --no-sync pytest codebase_rag/tests/test_go_frontend.py -v --maxfail=1 --tb=short --junitxml=/tmp/test-results/go.xml
             BASH
       - store_test_results:
           path: /tmp/test-results
