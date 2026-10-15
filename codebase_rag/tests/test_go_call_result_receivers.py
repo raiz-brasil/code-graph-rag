@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -29,6 +30,11 @@ BOX_GO = (
     "func (o *Other) Bump() int { return 2 }\n"
     "func (o *Other) Lock()     {}\n"
 )
+
+
+@pytest.fixture(autouse=True)
+def _tree_sitter_frontend(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
 
 
 def _index(root: Path) -> _StatefulIngestor:

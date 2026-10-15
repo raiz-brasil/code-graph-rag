@@ -126,6 +126,9 @@ jobs:
       - run:
           name: Smoke the simulated terminal behavior
           command: timeout --kill-after=30s 2m uv run --no-sync pytest codebase_rag/tests/test_duplicates_table_output.py::test_a_terminal_still_gets_the_editor_links 'codebase_rag/tests/test_report_table_width.py::test_a_terminal_table_still_fits_the_terminal_width[60]' --maxfail=1 --tb=short
+      - run:
+          name: Smoke the tree-sitter and semantic Go frontends
+          command: timeout --kill-after=30s 5m uv run --no-sync pytest codebase_rag/tests/test_go_call_result_receivers.py codebase_rag/tests/test_go_semantic_facts.py codebase_rag/tests/test_go_frontend.py --maxfail=1 --tb=short
       - restore_cache:
           keys:
             - hf-unixcoder-base-linux-v1
